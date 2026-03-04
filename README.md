@@ -13,11 +13,11 @@
       <em>图：海克斯识别与颜色提示效果展示</em>
     </p>
 
-  <p align="center">
-      <img src="./docs/demo2.png" width="600" alt="功能演示">
-      <br>
-      <em>图：海克斯识别与颜色提示效果展示</em>
-    </p>
+ <p align="center">
+     <img src="./docs/demo2.jpg" width="600" alt="增加功能演示">
+     <br>
+     <em>图：海克斯识别与颜色提示效果展示</em>
+   </p>
 
 > **数据来源说明**: 本项目的数据抓取自 [Blitz.gg](https://blitz.gg/lol/tierlist/aram-mayhem)和https://hextech.dtodo.cn/zh-CN。本工具仅供学习交流使用。
 

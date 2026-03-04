@@ -46,6 +46,12 @@
 
 ## 🛠️ 安装指南 (Installation)
 
+可以直接通过dist 中的程序运行
+
+
+
+
+
 1.  **克隆仓库**:
     ```bash
     git clone https://github.com/Nyx0ra/lol-aram-mayhem-hextech-helper.git

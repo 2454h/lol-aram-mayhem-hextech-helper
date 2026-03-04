@@ -15,15 +15,16 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from thefuzz import process
 from rapidocr_onnxruntime import RapidOCR
+from conversion_hint_engine import ConversionHintEngine
+from hextech_combo_provider import HextechComboProvider
 
 # ================= 配置与常量 =================
 
 REGIONS = {
-    "hex_1": {'top': 540, 'left': 650,  'width': 320, 'height': 60},
-    "hex_2": {'top': 540, 'left': 1130, 'width': 320, 'height': 60},
-    "hex_3": {'top': 540, 'left': 1600, 'width': 320, 'height': 60}
+    "hex_1": {'top': 405, 'left': 488,  'width': 240, 'height': 45},
+    "hex_2": {'top': 405, 'left': 848, 'width': 240, 'height': 45},
+    "hex_3": {'top': 405, 'left': 1200, 'width': 240, 'height': 45}
 }
-
 COLORS = {
     "normal": "#00FF00",  # 绿色
     "best":   "#FFD700",  # 金色
@@ -38,12 +39,14 @@ class DataManager:
     """负责加载和管理静态数据"""
     def __init__(self):
         self.hero_data = {}
-        # 拼音映射改为 defaultdict(list)，支持一个拼音对应多个英雄
         self.pinyin_map = defaultdict(list)
         self.tier_map = {}
-        # 动态获取 data 文件夹的绝对路径
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.data_dir = os.path.join(self.base_dir, 'data')
+        self.champions_path = os.path.join(self.data_dir, 'champions.json')
+        self.conversion_rules_path = os.path.join(self.data_dir, 'conversion_rules.json')
+        self.conversion_hint_engine = ConversionHintEngine(self.conversion_rules_path)
+        self.hextech_combo_provider = HextechComboProvider(self.data_dir, self.champions_path)
         self._load_data()
 
     def _load_data(self):
@@ -120,7 +123,7 @@ class DataManager:
                             self.pinyin_map[cn].append(cn)
             except Exception as e:
                 print(f"⚠️ {pinyin_file} 加载异常: {e}")
-        
+
         print("-> 数据初始化完成")
 
     def search_hero(self, query):
@@ -141,6 +144,27 @@ class DataManager:
                 return [guess], False
 
         return[], False
+
+    def get_conversion_hint(self, hero_name, augment_names):
+        return self.conversion_hint_engine.get_hint(hero_name, augment_names)
+
+    def get_conversion_recommendation(self, hero_name, augment_names):
+        return self.conversion_hint_engine.get_recommendation(hero_name, augment_names)
+
+    def format_conversion_detail(self, recommendation):
+        return self.conversion_hint_engine.format_detail_text(recommendation)
+
+    def get_hextech_combo_recommendation(self, hero_name, top_n=3):
+        return self.hextech_combo_provider.get_recommendation(hero_name, top_n=top_n)
+
+    def format_hextech_combo_overlay(self, recommendation):
+        return self.hextech_combo_provider.format_for_overlay(recommendation)
+
+    def format_hextech_combo_console(self, recommendation):
+        return self.hextech_combo_provider.format_for_console(recommendation)
+
+    def prefetch_hextech_combo_recommendation(self, hero_name, top_n=3):
+        self.hextech_combo_provider.prefetch_recommendation(hero_name, top_n=top_n)
 
 # ================= 2. 图像分析 (Core Logic) =================
 
@@ -195,7 +219,7 @@ class GameAnalyzer:
 
             res = {
                 "key": key, "valid": False, "rank": 999, 
-                "text": "", "highlight": False, "error": False
+                "text": "", "highlight": False, "error": False, "augment_name": ""
             }
 
             if not txt:
@@ -226,6 +250,7 @@ class GameAnalyzer:
                 res["text"] = f"【{match_name}】\n{info.get('tier','?')}(No.{info.get('t_rank','?')})\n总No.{info.get('g_rank','?')}"
                 res["valid"] = True
                 res["rank"] = info.get('g_rank', 999)
+                res["augment_name"] = match_name
             else:
                 res["text"] = "❌ 未识别"
                 res["error"] = True
@@ -349,6 +374,8 @@ class OverlayApp:
         fixed_rel_y = base_y_abs - self.offset_y - 120
 
         for key, info in results.items():
+            if key not in self.labels:
+                continue
             if not info.get("text"): continue
             
             lbl = self.labels[key]
@@ -378,11 +405,45 @@ class InputController(threading.Thread):
         self.dm = data_manager
         self.analyzer = analyzer
         self.current_hero = None
+        self.last_results = {}
 
     def run(self):
         while True:
             self.select_hero_phase()
             self.listening_phase()
+
+    def reset_view_state(self):
+        self.last_results = {}
+
+    def refresh_recommendation_view(self):
+        if not self.last_results:
+            return
+        self.queue.put({"cmd": "UPDATE", "data": self.last_results})
+
+    @staticmethod
+    def _inject_hint(results, hint, target_keys=None):
+        if not hint:
+            return results
+        keys = target_keys or []
+        for key in keys:
+            row = results.get(key, {})
+            if row.get("text"):
+                row["text"] = f"{row['text']}\n{hint}"
+                results[key] = row
+        return results
+
+    @staticmethod
+    def _pick_combo_target_key(results):
+        for key, item in results.items():
+            if item.get("highlight") and item.get("text"):
+                return key
+        for key, item in results.items():
+            if item.get("valid") and item.get("text"):
+                return key
+        for key, item in results.items():
+            if item.get("text"):
+                return key
+        return None
 
     def flush_input(self):
         """强制清空标准输入缓冲区"""
@@ -390,6 +451,7 @@ class InputController(threading.Thread):
             msvcrt.getch()
 
     def select_hero_phase(self):
+        self.reset_view_state()
         self.queue.put({"cmd": "CLEAR"})
         self.show_console_window()
         
@@ -460,10 +522,10 @@ class InputController(threading.Thread):
                         continue
 
                 self.current_hero = selected_name
+                self.dm.prefetch_hextech_combo_recommendation(self.current_hero, top_n=3)
                 print(f"✅ 锁定: {selected_name}")
-                print(">>> 切回游戏，按 [F6] 分析")
-                
-                self.queue.put({"cmd": "STATUS", "data": f"当前: {selected_name}\n按 F6 分析"})
+                print(">>> 切回游戏，按 [F6] 分析 | [F8] 重新输入英雄")
+                self.queue.put({"cmd": "STATUS", "data": f"当前: {selected_name}\nF6分析 F8重输"})
                 self.hide_console_window()
                 break
 
@@ -477,10 +539,34 @@ class InputController(threading.Thread):
             if keyboard.is_pressed('f6'):
                 self.queue.put({"cmd": "STATUS", "data": "🔎 正在分析..."})
                 
-                # 在后台线程执行分析，不阻塞UI
                 results = self.analyzer.analyze(self.current_hero)
-                
-                self.queue.put({"cmd": "UPDATE", "data": results})
+                self.last_results = results
+                augment_names = [
+                    item.get("augment_name", "")
+                    for item in results.values()
+                    if item.get("valid")
+                ]
+                recommendation = self.dm.get_conversion_recommendation(self.current_hero, augment_names)
+                hint = recommendation.get("short_text") if recommendation else None
+                if recommendation:
+                    detail = self.dm.format_conversion_detail(recommendation)
+                    if detail:
+                        print(detail)
+                trigger_keys = [
+                    key for key, item in results.items()
+                    if recommendation and item.get("augment_name") == recommendation.get("trigger_augment")
+                ]
+                self.last_results = self._inject_hint(self.last_results, hint, trigger_keys)
+                self.refresh_recommendation_view()
+                combo_rec = self.dm.get_hextech_combo_recommendation(self.current_hero, top_n=3)
+                combo_hint = self.dm.format_hextech_combo_overlay(combo_rec)
+                combo_detail = self.dm.format_hextech_combo_console(combo_rec)
+                if combo_detail:
+                    print(combo_detail)
+                combo_target_key = self._pick_combo_target_key(self.last_results)
+                if combo_target_key:
+                    self.last_results = self._inject_hint(self.last_results, combo_hint, [combo_target_key])
+                self.refresh_recommendation_view()
                 time.sleep(1) # 防抖
 
             if keyboard.is_pressed('f8'):

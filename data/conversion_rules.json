@@ -136,7 +136,7 @@
     },
     "德玛西亚之力": {
       "fit_level": "高",
-      "trigger_augment": "魔法转物理",
+      "trigger_augment": "物理转魔法",
       "core_items": ["海克斯火箭腰带", "影焰", "狂徒铠甲", "自然之力", "死亡之舞"],
       "optional_items": ["中娅沙漏", "女妖面纱"],
       "do_not_pick_if": ["依赖暴击穿甲的传统AD路线"],
@@ -154,7 +154,7 @@
     },
     "放逐之刃": {
       "fit_level": "高",
-      "trigger_augment": "魔法转物理",
+      "trigger_augment": "物理转魔法",
       "core_items": ["海克斯火箭腰带", "影焰", "中娅沙漏", "灭世者的死亡之帽", "虚空之杖"],
       "optional_items": ["女妖面纱", "兰德里的折磨"],
       "do_not_pick_if": ["坚持传统暴击穿甲路线", "敌方前排过多且缺乏持续输出"],
@@ -172,7 +172,7 @@
     },
     "荒漠屠夫": {
       "fit_level": "高",
-      "trigger_augment": "魔法转物理",
+      "trigger_augment": "物理转魔法",
       "core_items": ["海克斯火箭腰带", "影焰", "亡者的板甲", "狂徒铠甲", "自然之力"],
       "optional_items": ["中娅沙漏", "女妖面纱"],
       "do_not_pick_if": ["完全依赖穿甲秒杀", "对局需要持续普攻输出"],
@@ -190,7 +190,7 @@
     },
     "不屈之枪": {
       "fit_level": "高",
-      "trigger_augment": "魔法转物理",
+      "trigger_augment": "物理转魔法",
       "core_items": ["暗夜收割者", "影焰", "中娅沙漏", "灭世者的死亡之帽", "虚空之杖"],
       "optional_items": ["女妖面纱", "星界驱驰"],
       "do_not_pick_if": ["坚持纯穿甲物理路线", "团队缺少前排需要你承担坦度"],
@@ -208,7 +208,7 @@
     },
     "狂战士": {
       "fit_level": "中高",
-      "trigger_augment": "魔法转物理",
+      "trigger_augment": "物理转魔法",
       "core_items": ["暗夜收割者", "影焰", "狂徒铠甲", "自然之力", "死亡之舞"],
       "optional_items": ["中娅沙漏", "女妖面纱"],
       "do_not_pick_if": ["依赖暴击攻速站桩输出", "需要纯坦克承担前排"],

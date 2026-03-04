@@ -74,6 +74,28 @@ python main.py
 
 ---
 
+## 📦 给没有 Python 用户的安装包发布
+
+### 维护者：生成可安装的 Setup.exe
+1. 安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)（默认路径即可）。
+2. 在项目根目录执行：
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_release.ps1 -Version 1.0.0
+```
+3. 生成产物：
+   - 目录版：`dist/大乱斗海克斯助手/`
+   - 安装包：`dist_installer/LOL-ARAM-Mayhem-Hextech-Helper-Setup.exe`
+
+### 普通用户：仅安装和使用
+1. 双击 `LOL-ARAM-Mayhem-Hextech-Helper-Setup.exe` 完成安装。
+2. 通过桌面快捷方式启动程序。
+3. 首次使用请确保：
+   - 游戏为无边框模式。
+   - 程序以管理员权限运行。
+   - 按 README 的 `F6 / F8` 说明进行操作。
+
+---
+
 ## ⚙️ 高级配置 (分辨率适配)
 
 如果你使用非 2K 分辨率，需修改 `main.py` 顶部的 `REGIONS`：

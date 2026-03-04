@@ -2,15 +2,19 @@ import time
 import json
 import csv
 import os
+import sys
 import threading
 import queue
 import tkinter as tk
+from tkinter import messagebox
 import ctypes
 import msvcrt  # 用于清除输入缓冲区
 import numpy as np
 import cv2
 import mss
 import keyboard
+import logging
+import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from thefuzz import process
@@ -20,6 +24,7 @@ from hextech_combo_provider import HextechComboProvider
 
 # ================= 配置与常量 =================
 
+# 1920x1080 分辨率修正参数
 REGIONS = {
     "hex_1": {'top': 405, 'left': 488,  'width': 240, 'height': 45},
     "hex_2": {'top': 405, 'left': 848, 'width': 240, 'height': 45},
@@ -32,6 +37,22 @@ COLORS = {
     "error":  "#FF3333",  # 红色
     "bg":     "#000000"   # 背景黑
 }
+
+
+def _patch_rapidocr_module_aliases():
+    import importlib
+    alias_map = {
+        "ch_ppocr_v3_det": "rapidocr_onnxruntime.ch_ppocr_v3_det",
+        "ch_ppocr_v2_cls": "rapidocr_onnxruntime.ch_ppocr_v2_cls",
+        "ch_ppocr_v3_rec": "rapidocr_onnxruntime.ch_ppocr_v3_rec"
+    }
+    for short_name, full_name in alias_map.items():
+        if short_name in sys.modules:
+            continue
+        try:
+            sys.modules[short_name] = importlib.import_module(full_name)
+        except Exception:
+            pass
 
 # ================= 1. 数据管理 (Model) =================
 
@@ -51,6 +72,10 @@ class DataManager:
 
     def _load_data(self):
         print("--- 正在加载数据资源 ---")
+        
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir, exist_ok=True)
+            print(f"⚠️ 警告: 数据目录 {self.data_dir} 不存在，已自动创建。")
 
         # 1. 加载强化符文等级映射
         tier_file = os.path.join(self.data_dir, 'tiers.json')
@@ -172,6 +197,7 @@ class GameAnalyzer:
     """负责 OCR 和 图像处理 (解决线程安全问题)"""
     def __init__(self, data_manager):
         self.dm = data_manager
+        _patch_rapidocr_module_aliases()
         # OCR 引擎是线程安全的
         self.ocr = RapidOCR(use_angle_cls=False)
         # 线程局部存储：解决 mss 在多线程下的崩溃问题
@@ -200,10 +226,25 @@ class GameAnalyzer:
             gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
             h, w = gray.shape
             # 2倍上采样提高文字清晰度
-            return cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+            scaled = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+            # 二值化增强 (白字黑底 -> 黑字白底，利于OCR)
+            _, binary = cv2.threshold(scaled, 160, 255, cv2.THRESH_BINARY_INV)
+            return binary
         except Exception as e:
             print(f"截图失败: {e}")
             return None
+
+    @staticmethod
+    def _build_result(key):
+        return {
+            "key": key,
+            "valid": False,
+            "rank": 999,
+            "text": "",
+            "highlight": False,
+            "error": False,
+            "augment_name": ""
+        }
 
     def _process_single(self, key, hero_cn):
         try:
@@ -211,16 +252,16 @@ class GameAnalyzer:
             img = self.capture_region(region)
             
             if img is None:
-                return {"key": key, "text": "截图错误", "error": True}
+                res = self._build_result(key)
+                res["text"] = "截图错误"
+                res["error"] = True
+                return res
 
             res_ocr, _ = self.ocr(img)
             txt = "".join([line[1] for line in res_ocr]) if res_ocr else ""
             txt = txt.replace(" ", "").replace(".", "")
 
-            res = {
-                "key": key, "valid": False, "rank": 999, 
-                "text": "", "highlight": False, "error": False, "augment_name": ""
-            }
+            res = self._build_result(key)
 
             if not txt:
                 res["text"] = "❌ 无文字"
@@ -259,7 +300,10 @@ class GameAnalyzer:
             
         except Exception as e:
             print(f"处理异常 ({key}): {e}")
-            return {"key": key, "text": "Error", "error": True}
+            res = self._build_result(key)
+            res["text"] = "Error"
+            res["error"] = True
+            return res
 
     def analyze(self, hero_cn):
         if not hero_cn: return {}
@@ -371,7 +415,8 @@ class OverlayApp:
         
         # 强制对齐 Y 轴
         base_y_abs = REGIONS['hex_1']['top']
-        fixed_rel_y = base_y_abs - self.offset_y - 120
+        # 1080p下调整偏移量 (原120 -> 90)
+        fixed_rel_y = base_y_abs - self.offset_y - 90
 
         for key, info in results.items():
             if key not in self.labels:
@@ -380,9 +425,9 @@ class OverlayApp:
             
             lbl = self.labels[key]
             # 颜色逻辑
-            if info["error"]:
+            if info.get("error", False):
                 fg = COLORS["error"]
-            elif info["highlight"]:
+            elif info.get("highlight", False):
                 fg = COLORS["best"]
             else:
                 fg = COLORS["normal"]
@@ -590,40 +635,88 @@ class InputController(threading.Thread):
             ctypes.windll.user32.ShowWindow(hwnd, 6) # SW_MINIMIZE
         except: pass
 
+def setup_logging():
+    logging.basicConfig(
+        filename='error.log',
+        level=logging.ERROR,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        encoding='utf-8'
+    )
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def show_error_box(title, message):
+    try:
+        # 尝试使用 ctypes 弹窗 (即使 tk 未初始化)
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)
+    except:
+        print(f"[{title}] {message}")
+
 # ================= 5. 主入口 =================
 
 def main():
-    # 强制设置工作目录为脚本所在目录
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(script_dir)
-    os.system('title ARAM 海克斯助手')
-    print(f"Working Directory: {script_dir}")
-
-    # 1. 初始化核心数据与逻辑
-    dm = DataManager()
-    
-    if not dm.hero_data:
-        print("❌ 警告: 未加载到任何英雄数据，请检查CSV文件。")
-        input("按任意键退出...")
-        return
-
-    analyzer = GameAnalyzer(dm)
-    
-    # 2. 初始化 UI 与 通信队列
-    root = tk.Tk()
-    msg_queue = queue.Queue()
-    app = OverlayApp(root, msg_queue)
-    
-    # 3. 启动后台控制线程
-    controller = InputController(msg_queue, dm, analyzer)
-    controller.start()
-    
-    # 4. 进入 UI 主循环
-    print("程序已启动...")
     try:
+        # 0. 环境初始化 (设置 CWD)
+        if getattr(sys, 'frozen', False):
+            script_dir = os.path.dirname(sys.executable)
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        os.chdir(script_dir)
+        os.system('title ARAM 海克斯助手')
+        print(f"Working Directory: {script_dir}")
+        
+        # 1. 配置日志 (确保在 CWD 设置后)
+        setup_logging()
+
+        # 2. 权限检查
+        if not is_admin():
+            msg = "检测到非管理员权限运行！\n程序使用了全局热键监听(keyboard)，没有管理员权限可能会闪退或无法响应按键。\n建议右键以管理员身份运行。"
+            print(f"警告: {msg}")
+            # 0x30 = MB_ICONWARNING
+            ctypes.windll.user32.MessageBoxW(0, msg, "权限警告", 0x30)
+
+        # 3. 初始化核心数据与逻辑
+        print("正在初始化数据管理器...")
+        dm = DataManager()
+        
+        if not dm.hero_data:
+            err_msg = "未加载到任何英雄数据！\n请检查 data/hero_augments.csv 文件是否存在且格式正确。"
+            print(f"❌ {err_msg}")
+            show_error_box("数据缺失", err_msg)
+            return
+
+        print("正在初始化图像分析引擎...")
+        analyzer = GameAnalyzer(dm)
+        
+        # 4. 初始化 UI 与 通信队列
+        print("正在启动 UI...")
+        root = tk.Tk()
+        msg_queue = queue.Queue()
+        app = OverlayApp(root, msg_queue)
+        
+        # 5. 启动后台控制线程
+        controller = InputController(msg_queue, dm, analyzer)
+        controller.start()
+        
+        # 6. 进入 UI 主循环
+        print("程序已启动，等待指令...")
         root.mainloop()
+        
     except KeyboardInterrupt:
         os._exit(0)
+    except Exception as e:
+        err_msg = f"程序发生严重错误:\n{str(e)}\n\n详情已写入 error.log"
+        print(f"❌ {err_msg}")
+        logging.error("Uncaught exception", exc_info=True)
+        show_error_box("程序崩溃", err_msg)
+        # 给用户一点时间看控制台 (如果有的话)
+        time.sleep(5)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
